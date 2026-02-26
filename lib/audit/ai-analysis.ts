@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AuditResult, DimensionResult, Finding, PageData } from "./types";
 
-export const AI_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6-20250514";
+export const AI_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 
 export function hasApiKey(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;

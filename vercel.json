@@ -1,3 +1,14 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "functions": {
+    "app/api/audit/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/audit/upload/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/audit/fix-pages/route.ts": {
+      "maxDuration": 30
+    }
+  }
 }
