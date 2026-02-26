@@ -1,65 +1,277 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState, useCallback } from "react";
+import { SearchHero } from "@/components/search-hero";
+import { AuditProgress } from "@/components/audit-progress";
+import { ScoreDisplay } from "@/components/score-display";
+import { DimensionCard } from "@/components/dimension-card";
+import { Button } from "@/components/ui/button";
+import { Download, RotateCcw, Shield, FileText, Bot, Globe, Code2, Zap, Search, FileJson } from "lucide-react";
+import type { AuditResult } from "@/lib/audit/types";
+
+type AppState = "idle" | "loading" | "results" | "error";
+
+interface ProgressStep {
+  dimension: string;
+  status: "pending" | "running" | "complete" | "skipped";
+  score?: number;
+}
+
+const DIMENSIONS_EXPLAINED = [
+  { icon: FileJson, name: "Schema.org JSON-LD", weight: "25%", desc: "Structured data that helps AI understand your content's meaning and relationships." },
+  { icon: Shield, name: "robots.txt", weight: "20%", desc: "Controls which AI crawlers can access your site. 17+ AI bots checked." },
+  { icon: FileText, name: "llms.txt", weight: "15%", desc: "A machine-readable site guide following the llmstxt.org standard." },
+  { icon: Bot, name: "AEO Content", weight: "15%", desc: "Answer Engine Optimization — is your content formatted for AI extraction?" },
+  { icon: Globe, name: "Meta & OG Tags", weight: "10%", desc: "8 essential meta tags that help AI understand each page." },
+  { icon: Search, name: "sitemap.xml", weight: "5%", desc: "Helps AI crawlers discover all your pages efficiently." },
+  { icon: Code2, name: "Semantic HTML", weight: "5%", desc: "Proper heading hierarchy, landmarks, and accessibility for AI parsing." },
+  { icon: Zap, name: "Rendering", weight: "5%", desc: "Is your content visible in raw HTML or hidden behind JavaScript?" },
+];
+
+export default function HomePage() {
+  const [state, setState] = useState<AppState>("idle");
+  const [result, setResult] = useState<AuditResult | null>(null);
+  const [progress, setProgress] = useState<ProgressStep[]>([]);
+  const [siteInfo, setSiteInfo] = useState<{ siteType: string; pagesFound: number; baseUrl: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  /** Shared NDJSON stream reader — handles progress, info, complete, and error messages. */
+  const processStream = useCallback(async (response: Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      setError("Streaming not supported");
+      setState("error");
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+
+          if (msg.type === "progress") {
+            setProgress(prev => {
+              const existing = prev.findIndex(p => p.dimension === msg.dimension);
+              const step: ProgressStep = {
+                dimension: msg.dimension,
+                status: msg.status,
+                score: msg.score,
+              };
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = step;
+                return updated;
+              }
+              return [...prev, step];
+            });
+          } else if (msg.type === "info") {
+            setSiteInfo({
+              siteType: msg.siteType,
+              pagesFound: msg.pagesFound,
+              baseUrl: msg.baseUrl,
+            });
+          } else if (msg.type === "complete") {
+            setResult(msg.result);
+            setState("results");
+          } else if (msg.type === "error") {
+            setError(msg.message);
+            setState("error");
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+    }
+  }, []);
+
+  const handleAudit = useCallback(async (url: string) => {
+    setState("loading");
+    setProgress([]);
+    setSiteInfo(null);
+    setResult(null);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      if (response.status === 429) {
+        const data = await response.json();
+        setError(data.message || "Rate limited. Please try again later.");
+        setState("error");
+        return;
+      }
+
+      if (!response.ok && !response.body) {
+        setError("Failed to start audit. Please try again.");
+        setState("error");
+        return;
+      }
+
+      await processStream(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error. Please check your connection.");
+      setState("error");
+    }
+  }, [processStream]);
+
+  const handleUpload = useCallback(async (file: File) => {
+    setState("loading");
+    setProgress([]);
+    setSiteInfo(null);
+    setResult(null);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/audit/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.status === 429) {
+        const data = await response.json();
+        setError(data.message || "Rate limited. Please try again later.");
+        setState("error");
+        return;
+      }
+
+      if (!response.ok && !response.body) {
+        const data = await response.json().catch(() => ({}));
+        setError((data as { message?: string }).message || "Failed to process upload. Please try again.");
+        setState("error");
+        return;
+      }
+
+      await processStream(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error. Please check your connection.");
+      setState("error");
+    }
+  }, [processStream]);
+
+  const handleReset = useCallback(() => {
+    setState("idle");
+    setResult(null);
+    setProgress([]);
+    setSiteInfo(null);
+    setError(null);
+  }, []);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <>
+      {state === "idle" && (
+        <>
+          <SearchHero onSubmit={handleAudit} onUpload={handleUpload} isLoading={false} />
+
+          {/* What We Check section */}
+          <section className="mx-auto max-w-5xl px-4 pb-16">
+            <h2 className="mb-8 text-center text-2xl font-bold text-foreground">
+              What We Check
+            </h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {DIMENSIONS_EXPLAINED.map((dim) => (
+                <div
+                  key={dim.name}
+                  className="rounded-lg border border-border bg-card p-4 transition-colors hover:border-accent/50"
+                >
+                  <dim.icon className="mb-2 h-5 w-5 text-accent" />
+                  <h3 className="mb-1 text-sm font-semibold text-foreground">
+                    {dim.name}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      ({dim.weight})
+                    </span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">{dim.desc}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+
+      {state === "loading" && (
+        <AuditProgress steps={progress} siteInfo={siteInfo} />
+      )}
+
+      {state === "error" && (
+        <div className="flex min-h-[60vh] flex-col items-center justify-center px-4 text-center">
+          <div className="rounded-lg border border-fail/30 bg-fail/10 p-6 max-w-md">
+            <p className="text-lg font-semibold text-fail mb-2">Audit Failed</p>
+            <p className="text-sm text-muted-foreground mb-4">{error}</p>
+            <Button onClick={handleReset} variant="outline">
+              <RotateCcw className="h-4 w-4" />
+              Try Again
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      )}
+
+      {state === "results" && result && (
+        <div className="mx-auto max-w-3xl px-4 pb-16">
+          <ScoreDisplay
+            score={result.overallScore}
+            grade={result.grade}
+            siteType={result.siteType}
+            pagesAudited={result.pagesAudited}
+            url={result.url}
+          />
+
+          {/* Priority actions */}
+          {result.priorities.length > 0 && (
+            <div className="mb-8 rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-3 text-sm font-semibold text-foreground">Top Priorities</h3>
+              <ol className="space-y-2">
+                {result.priorities.map((p, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <span className="shrink-0 rounded-full bg-accent/20 px-2 py-0.5 text-xs font-bold text-accent">
+                      {i + 1}
+                    </span>
+                    {p}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Dimension cards */}
+          <div className="space-y-3">
+            {result.dimensions.map((dim, i) => (
+              <DimensionCard key={dim.id} dimension={dim} index={i} />
+            ))}
+          </div>
+
+          {/* Actions */}
+          <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+            <Button asChild size="lg">
+              <a href={`/api/download?id=${result.downloadId}`} download>
+                <Download className="h-4 w-4" />
+                Download Fixes
+              </a>
+            </Button>
+            <Button onClick={handleReset} variant="outline" size="lg">
+              <RotateCcw className="h-4 w-4" />
+              Audit Another Site
+            </Button>
+          </div>
         </div>
-      </main>
-    </div>
+      )}
+    </>
   );
 }
