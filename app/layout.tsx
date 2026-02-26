@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     title: "LLM Search — AI Visibility Audit",
     description:
       "Is your website visible to AI search engines? Get an instant 8-dimension audit.",
-    url: "https://llmsearch.yourupdatedpage.xyz",
+    url: "https://llm-search-one.vercel.app",
     type: "website",
   },
 };
