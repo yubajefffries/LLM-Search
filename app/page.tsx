@@ -56,6 +56,7 @@ export default function HomePage() {
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let receivedFinalMessage = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -114,14 +115,23 @@ export default function HomePage() {
           } else if (msg.type === "complete") {
             setResult(msg.result);
             setState("results");
+            receivedFinalMessage = true;
           } else if (msg.type === "error") {
             setError(msg.message);
             setState("error");
+            receivedFinalMessage = true;
           }
         } catch {
           // Skip malformed lines
         }
       }
+    }
+
+    // Safety net: if stream ended without a "complete" or "error" message,
+    // the server likely timed out or crashed mid-stream
+    if (!receivedFinalMessage) {
+      setError("The audit timed out. Try again — results will fall back to fast analysis if AI is slow.");
+      setState("error");
     }
   }, []);
 

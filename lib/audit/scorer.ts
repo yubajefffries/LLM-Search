@@ -110,14 +110,29 @@ export async function runFullAudit(
   let aiMode: "ai-enhanced" | "basic" | "ai-failed" = "basic";
 
   if (hasApiKey()) {
-    onProgress?.("AI Analysis", "running", undefined, "Connecting to Claude AI...");
-    if (onProgress) await delay(800);
+    onProgress?.("AI Analysis", "running", undefined, "Running AI analysis (3 parallel tasks)...");
     let anyAiSucceeded = false;
     let anyAiFailed = false;
 
-    // AEO enhancement
-    onProgress?.("AI Analysis", "running", undefined, "Enhancing content analysis with Claude...");
-    const aeoAiResult = await enhanceAeoWithAI(aeoResult, pagesToAudit);
+    // Fire all 3 independent AI calls in parallel
+    const [aeoSettled, llmsSettled, schemaSettled] = await Promise.allSettled([
+      enhanceAeoWithAI(aeoResult, pagesToAudit),
+      generateLlmsTxtWithAI(pagesToAudit, crawl.baseUrl, siteName),
+      generateSchemaJsonLdWithAI(pagesToAudit, crawl.baseUrl, siteName),
+    ]);
+
+    // Unwrap — each function already catches internally, so "rejected" = unexpected crash
+    const aeoAiResult = aeoSettled.status === "fulfilled"
+      ? aeoSettled.value
+      : { result: aeoResult, aiUsed: false, error: String(aeoSettled.reason), durationMs: 0 };
+    const llmsAiResult = llmsSettled.status === "fulfilled"
+      ? llmsSettled.value
+      : { result: null, error: String(llmsSettled.reason), durationMs: 0 };
+    const schemaAiResult = schemaSettled.status === "fulfilled"
+      ? schemaSettled.value
+      : { result: null, error: String(schemaSettled.reason), durationMs: 0 };
+
+    // AEO diagnostics
     aiDiagnostics.push({
       step: "AEO Enhancement",
       success: aeoAiResult.aiUsed,
@@ -132,9 +147,7 @@ export async function runFullAudit(
       anyAiSucceeded = true;
     }
 
-    // llms.txt AI generation
-    onProgress?.("AI Analysis", "running", undefined, "Generating llms.txt with Claude...");
-    const llmsAiResult = await generateLlmsTxtWithAI(pagesToAudit, crawl.baseUrl, siteName);
+    // llms.txt diagnostics
     aiDiagnostics.push({
       step: "llms.txt Generation",
       success: !!llmsAiResult.result,
@@ -145,9 +158,7 @@ export async function runFullAudit(
     if (llmsAiResult.error) anyAiFailed = true;
     if (llmsAiResult.result) anyAiSucceeded = true;
 
-    // JSON-LD AI generation
-    onProgress?.("AI Analysis", "running", undefined, "Generating Schema.org JSON-LD with Claude...");
-    const schemaAiResult = await generateSchemaJsonLdWithAI(pagesToAudit, crawl.baseUrl, siteName);
+    // Schema JSON-LD diagnostics
     aiDiagnostics.push({
       step: "Schema JSON-LD",
       success: !!schemaAiResult.result,

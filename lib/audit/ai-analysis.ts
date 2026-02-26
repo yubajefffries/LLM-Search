@@ -3,6 +3,12 @@ import type { AuditResult, DimensionResult, Finding, PageData } from "./types";
 
 export const AI_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 
+const AI_TIMEOUT_MS = 25_000;
+
+function createClient(): Anthropic {
+  return new Anthropic({ timeout: AI_TIMEOUT_MS, maxRetries: 0 });
+}
+
 export function hasApiKey(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
 }
@@ -118,7 +124,7 @@ export async function enhanceAeoWithAI(
   }
 
   try {
-    const client = new Anthropic();
+    const client = createClient();
 
     // Prepare condensed page content for analysis
     const pagesSummary = pages.slice(0, 5).map(p => {
@@ -189,7 +195,7 @@ export async function generateLlmsTxtWithAI(
   }
 
   try {
-    const client = new Anthropic();
+    const client = createClient();
 
     const pagesInfo = pages.map(p => {
       const textOnly = p.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -253,7 +259,7 @@ export async function generateSchemaJsonLdWithAI(
   }
 
   try {
-    const client = new Anthropic();
+    const client = createClient();
 
     const pagesInfo = pages.slice(0, 10).map(p => {
       const textOnly = p.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -315,7 +321,7 @@ export async function enhanceReportWithAI(
   }
 
   try {
-    const client = new Anthropic();
+    const client = createClient();
 
     const response = await client.messages.create({
       model: AI_MODEL,

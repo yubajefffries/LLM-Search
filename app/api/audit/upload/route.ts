@@ -8,6 +8,8 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 // Zip magic bytes: PK\x03\x04
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   // Rate limiting (same pool as URL audits)
   const ip =
