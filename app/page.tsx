@@ -5,8 +5,11 @@ import { SearchHero } from "@/components/search-hero";
 import { AuditProgress } from "@/components/audit-progress";
 import { ScoreDisplay } from "@/components/score-display";
 import { DimensionCard } from "@/components/dimension-card";
+import { GeneratedFilesPanel } from "@/components/generated-files-panel";
+import { RemediationReport } from "@/components/remediation-report";
+import { FixedPagesPanel } from "@/components/fixed-pages-panel";
 import { Button } from "@/components/ui/button";
-import { Download, RotateCcw, Shield, FileText, Bot, Globe, Code2, Zap, Search, FileJson } from "lucide-react";
+import { RotateCcw, Shield, FileText, Bot, Globe, Code2, Zap, Search, FileJson } from "lucide-react";
 import type { AuditResult } from "@/lib/audit/types";
 
 type AppState = "idle" | "loading" | "results" | "error";
@@ -15,6 +18,12 @@ interface ProgressStep {
   dimension: string;
   status: "pending" | "running" | "complete" | "skipped";
   score?: number;
+  detail?: string;
+}
+
+interface AiSubStep {
+  label: string;
+  status: "running" | "complete";
 }
 
 const DIMENSIONS_EXPLAINED = [
@@ -34,6 +43,7 @@ export default function HomePage() {
   const [progress, setProgress] = useState<ProgressStep[]>([]);
   const [siteInfo, setSiteInfo] = useState<{ siteType: string; pagesFound: number; baseUrl: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [aiSubSteps, setAiSubSteps] = useState<AiSubStep[]>([]);
 
   /** Shared NDJSON stream reader — handles progress, info, complete, and error messages. */
   const processStream = useCallback(async (response: Response) => {
@@ -61,12 +71,32 @@ export default function HomePage() {
           const msg = JSON.parse(line);
 
           if (msg.type === "progress") {
+            // Track AI sub-steps separately
+            if (msg.dimension === "AI Analysis" && msg.detail) {
+              if (msg.status === "running") {
+                setAiSubSteps(prev => {
+                  // Mark previous running sub-step as complete
+                  const updated = prev.map(s =>
+                    s.status === "running" ? { ...s, status: "complete" as const } : s
+                  );
+                  // Push new sub-step
+                  return [...updated, { label: msg.detail, status: "running" as const }];
+                });
+              } else if (msg.status === "complete" || msg.status === "skipped") {
+                // Mark all remaining as complete
+                setAiSubSteps(prev =>
+                  prev.map(s => ({ ...s, status: "complete" as const }))
+                );
+              }
+            }
+
             setProgress(prev => {
               const existing = prev.findIndex(p => p.dimension === msg.dimension);
               const step: ProgressStep = {
                 dimension: msg.dimension,
                 status: msg.status,
                 score: msg.score,
+                detail: msg.detail,
               };
               if (existing >= 0) {
                 const updated = [...prev];
@@ -101,6 +131,7 @@ export default function HomePage() {
     setSiteInfo(null);
     setResult(null);
     setError(null);
+    setAiSubSteps([]);
 
     try {
       const response = await fetch("/api/audit", {
@@ -135,6 +166,7 @@ export default function HomePage() {
     setSiteInfo(null);
     setResult(null);
     setError(null);
+    setAiSubSteps([]);
 
     try {
       const formData = new FormData();
@@ -172,7 +204,13 @@ export default function HomePage() {
     setProgress([]);
     setSiteInfo(null);
     setError(null);
+    setAiSubSteps([]);
   }, []);
+
+  const aiStepStatus = progress.find(s => s.dimension === "AI Analysis")?.status ?? "pending";
+
+  const reportMarkdown = result?.generatedFiles?.["remediation-report.md"];
+  const reportIsAiEnhanced = result?.aiMode === "ai-enhanced" && result?.aiDiagnostics?.some(d => d.step === "Report Enhancement" && d.success);
 
   return (
     <>
@@ -207,7 +245,12 @@ export default function HomePage() {
       )}
 
       {state === "loading" && (
-        <AuditProgress steps={progress} siteInfo={siteInfo} />
+        <AuditProgress
+          steps={progress}
+          siteInfo={siteInfo}
+          aiSubSteps={aiSubSteps}
+          aiStatus={aiStepStatus}
+        />
       )}
 
       {state === "error" && (
@@ -231,6 +274,8 @@ export default function HomePage() {
             siteType={result.siteType}
             pagesAudited={result.pagesAudited}
             url={result.url}
+            aiMode={result.aiMode}
+            aiDiagnostics={result.aiDiagnostics}
           />
 
           {/* Priority actions */}
@@ -250,21 +295,35 @@ export default function HomePage() {
             </div>
           )}
 
+          {/* Remediation Report */}
+          {reportMarkdown && (
+            <RemediationReport
+              markdown={reportMarkdown}
+              aiEnhanced={reportIsAiEnhanced}
+            />
+          )}
+
           {/* Dimension cards */}
-          <div className="space-y-3">
+          <div className="mt-8 space-y-3">
             {result.dimensions.map((dim, i) => (
               <DimensionCard key={dim.id} dimension={dim} index={i} />
             ))}
           </div>
 
+          {/* Generated Files Panel */}
+          <GeneratedFilesPanel
+            files={result.generatedFiles}
+            aiMode={result.aiMode}
+            downloadId={result.downloadId}
+          />
+
+          {/* Fixed Pages (opt-in) */}
+          {result.fixPagesId && (
+            <FixedPagesPanel fixPagesId={result.fixPagesId} />
+          )}
+
           {/* Actions */}
           <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-            <Button asChild size="lg">
-              <a href={`/api/download?id=${result.downloadId}`} download>
-                <Download className="h-4 w-4" />
-                Download Fixes
-              </a>
-            </Button>
             <Button onClick={handleReset} variant="outline" size="lg">
               <RotateCcw className="h-4 w-4" />
               Audit Another Site

@@ -1,5 +1,7 @@
-import type { PageData, CrawlResult } from "./types";
-import { AI_CRAWLERS } from "../constants";
+import * as cheerio from "cheerio";
+import type { AuditResult, PageData } from "./types";
+import { AI_CRAWLERS, DIMENSION_INFO } from "../constants";
+import { guessPageType } from "./checks/schema";
 
 export function generateRobotsTxt(baseUrl: string): string {
   const crawlerBlocks = AI_CRAWLERS.map(crawler => {
@@ -120,4 +122,512 @@ function extractDescription(page: PageData): string {
   }
 
   return page.title || "No description available";
+}
+
+function safeFilename(path: string): string {
+  // Replace leading slash, then remaining slashes with --
+  return path.replace(/^\//, "").replace(/\//g, "--") || "index";
+}
+
+function buildBreadcrumb(page: PageData, baseUrl: string): Record<string, unknown> {
+  const parts = page.path.split("/").filter(Boolean);
+  const items = [
+    { "@type": "ListItem", position: 1, name: "Home", item: baseUrl },
+  ];
+  let accumulated = baseUrl;
+  parts.forEach((part, i) => {
+    accumulated += `/${part}`;
+    items.push({
+      "@type": "ListItem",
+      position: i + 2,
+      name: part.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+      item: accumulated,
+    });
+  });
+  return {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: items,
+  };
+}
+
+export function generateSchemaJsonLd(
+  pages: PageData[],
+  baseUrl: string,
+  siteName: string
+): Record<string, string> {
+  const files: Record<string, string> = {};
+
+  for (const page of pages) {
+    const pageType = guessPageType(page.url, page.title);
+    const desc = extractDescription(page);
+    const schemas: Record<string, unknown>[] = [];
+
+    switch (pageType) {
+      case "home": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          name: siteName,
+          url: baseUrl,
+          description: desc,
+        });
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          name: siteName,
+          url: baseUrl,
+          description: desc,
+        });
+        break;
+      }
+      case "about": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "AboutPage",
+          name: page.title || "About",
+          url: page.url,
+          description: desc,
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      case "post": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "BlogPosting",
+          headline: page.title,
+          url: page.url,
+          description: desc,
+          author: { "@type": "Organization", name: siteName },
+          publisher: { "@type": "Organization", name: siteName },
+          datePublished: new Date().toISOString().split("T")[0],
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      case "blog": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          name: page.title || "Blog",
+          url: page.url,
+          description: desc,
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      case "services": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "Service",
+          name: page.title || "Services",
+          url: page.url,
+          description: desc,
+          provider: { "@type": "Organization", name: siteName },
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      case "products": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "Product",
+          name: page.title || "Products",
+          url: page.url,
+          description: desc,
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      case "contact": {
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "ContactPage",
+          name: page.title || "Contact",
+          url: page.url,
+          description: desc,
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      case "faq": {
+        // Extract Q&A pairs from the page
+        const qaMatches = page.html.match(/<(h[2-4]|summary|dt)[^>]*>([\s\S]*?)<\/\1>/gi) || [];
+        const mainEntity = qaMatches.slice(0, 10).map(q => {
+          const text = q.replace(/<[^>]+>/g, "").trim();
+          return {
+            "@type": "Question",
+            name: text,
+            acceptedAnswer: { "@type": "Answer", text: "See page for full answer." },
+          };
+        });
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          name: page.title || "FAQ",
+          url: page.url,
+          mainEntity: mainEntity.length > 0 ? mainEntity : undefined,
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+      default: {
+        // Generic WebPage + breadcrumb
+        schemas.push({
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: page.title,
+          url: page.url,
+          description: desc,
+        });
+        schemas.push(buildBreadcrumb(page, baseUrl));
+        break;
+      }
+    }
+
+    const jsonLdContent = schemas.map(s =>
+      `<script type="application/ld+json">\n${JSON.stringify(s, null, 2)}\n</script>`
+    ).join("\n\n");
+
+    const filename = `schema/${safeFilename(page.path)}.jsonld`;
+    files[filename] = jsonLdContent;
+  }
+
+  // Add README
+  files["schema/README.md"] = `# Schema.org JSON-LD Files
+
+Generated by LLM Search Optimizer.
+
+## Installation
+
+Copy the JSON-LD \`<script>\` tags from each file into the \`<head>\` of the corresponding page.
+
+### For Next.js (App Router)
+
+Add to your page's layout or page component:
+
+\`\`\`tsx
+export default function Page() {
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+      />
+      {/* page content */}
+    </>
+  );
+}
+\`\`\`
+
+### For WordPress
+
+Use a plugin like "Schema & Structured Data for WP" or add to your theme's \`header.php\`:
+
+\`\`\`php
+<script type="application/ld+json">
+  <?php echo json_encode($schema); ?>
+</script>
+\`\`\`
+
+### For Static HTML
+
+Paste the \`<script>\` tag directly into the \`<head>\` of each HTML file.
+
+## Files
+
+${Object.keys(files).filter(f => f.endsWith(".jsonld")).map(f => `- \`${f}\``).join("\n")}
+
+## Validation
+
+Test your JSON-LD at:
+- https://validator.schema.org/
+- https://search.google.com/test/rich-results
+`;
+
+  return files;
+}
+
+// --- Remediation Report ---
+
+const DIMENSION_WHY: Record<string, string> = {
+  schema: "JSON-LD structured data helps AI models understand what your content is about, who wrote it, and how it relates to other entities. Without it, AI crawlers have to guess — and they often guess wrong or skip you entirely.",
+  robots: "Your robots.txt tells AI crawlers whether they're allowed to index your site. If you block them (or don't mention them), AI search engines like ChatGPT, Perplexity, and Claude won't include your content in their answers.",
+  llmsTxt: "llms.txt is a new standard (llmstxt.org) that gives AI models a machine-readable summary of your site. It's like a README for AI — without it, models have to scrape and interpret your pages on their own.",
+  aeo: "Answer Engine Optimization measures how well your content is structured for AI extraction. Short paragraphs, clear summaries, FAQ sections, and direct answers make it easy for AI to cite your content.",
+  meta: "Meta tags and Open Graph tags help AI understand each page's title, description, and purpose. Missing tags mean AI models have less context when deciding whether to reference your content.",
+  sitemap: "A sitemap.xml helps AI crawlers discover all your pages efficiently. Without one, crawlers may miss important content or waste time following links.",
+  semantic: "Semantic HTML (proper headings, landmarks, ARIA) helps AI parse your content structure. Clean HTML hierarchies are easier for AI to understand than div-soup.",
+  rendering: "If your content requires JavaScript to render, many AI crawlers will see a blank page. Server-rendered or static content is always preferable for AI discoverability.",
+};
+
+const FRAMEWORK_INSTRUCTIONS: Record<string, Record<string, string>> = {
+  WordPress: {
+    schema: "Install a plugin like 'Schema & Structured Data for WP & AMP' or add the JSON-LD script tags to your theme's header.php. Copy the generated .jsonld files from the schema/ folder.",
+    robots: "Replace your robots.txt content via Settings > Reading or use a plugin like Yoast SEO. Copy the generated robots.txt content.",
+    llmsTxt: "Create a file at your-site.com/llms.txt. In WordPress, you can use a plugin or add a rewrite rule in .htaccess to serve a static file from your theme directory.",
+    meta: "Use Yoast SEO or Rank Math to set meta descriptions and OG tags for each page/post.",
+    sitemap: "Most SEO plugins (Yoast, Rank Math) generate sitemaps automatically. Ensure yours includes all public pages.",
+    general: "For WordPress sites, most fixes can be applied through plugins without touching code directly.",
+  },
+  "Next.js": {
+    schema: "Add JSON-LD using <script type='application/ld+json' dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }} /> in each page or layout component.",
+    robots: "Place the generated robots.txt in your public/ directory, or use the robots.ts metadata API in Next.js 13+.",
+    llmsTxt: "Place llms.txt and llms-full.txt in your public/ directory.",
+    meta: "Use the generateMetadata() function in each page.tsx/layout.tsx to set title, description, and Open Graph tags.",
+    sitemap: "Use Next.js sitemap.ts API to generate sitemaps dynamically, or place a static sitemap.xml in public/.",
+    general: "For Next.js, use the App Router metadata API for SEO tags and place static files in public/.",
+  },
+  "Static HTML": {
+    schema: "Paste the <script type='application/ld+json'> tags from each .jsonld file into the <head> of the corresponding HTML page.",
+    robots: "Place the generated robots.txt file in your site's root directory.",
+    llmsTxt: "Place llms.txt and llms-full.txt in your site's root directory.",
+    meta: "Add the missing <meta> and <meta property='og:...'> tags to the <head> of each HTML page.",
+    sitemap: "Place the generated sitemap.xml in your site's root directory.",
+    general: "For static HTML sites, manually add the generated files and tags to each page's HTML.",
+  },
+};
+
+function getFrameworkKey(siteType: string): string {
+  if (siteType.includes("WordPress")) return "WordPress";
+  if (siteType.includes("Next")) return "Next.js";
+  return "Static HTML";
+}
+
+export function generateRemediationReport(
+  result: AuditResult,
+  pages: PageData[],
+  baseUrl: string,
+): string {
+  const today = new Date().toISOString().split("T")[0];
+  const frameworkKey = getFrameworkKey(result.siteType);
+  const instructions = FRAMEWORK_INSTRUCTIONS[frameworkKey] || FRAMEWORK_INSTRUCTIONS["Static HTML"];
+
+  let md = "";
+
+  // Header
+  md += `# LLM Search Optimization Report\n\n`;
+  md += `- **Site:** ${baseUrl}\n`;
+  md += `- **Date:** ${today}\n`;
+  md += `- **Score:** ${result.overallScore}/100 (Grade ${result.grade})\n`;
+  md += `- **Site Type:** ${result.siteType}\n`;
+  md += `- **Pages Audited:** ${result.pagesAudited} of ${result.totalPages} discovered\n\n`;
+
+  // Executive Summary
+  md += `## Executive Summary\n\n`;
+  if (result.overallScore >= 80) {
+    md += `Your site is well-optimized for AI/LLM search engines. Most dimensions are in good shape, and AI crawlers should be able to discover, understand, and cite your content effectively. Focus on the remaining improvements below to reach an excellent score.\n\n`;
+  } else if (result.overallScore >= 60) {
+    md += `Your site has a moderate level of AI/LLM search optimization. AI crawlers can find some of your content, but significant gaps exist that prevent them from fully understanding and citing your pages. Addressing the priority actions below will substantially improve your AI discoverability.\n\n`;
+  } else {
+    md += `Your site has significant gaps in AI/LLM search optimization. Most AI crawlers and search engines will struggle to discover, parse, and reference your content. This means your site is likely being overlooked by AI-powered tools like ChatGPT, Perplexity, Claude, and Google's AI Overviews. The fixes below are critical to improving your visibility.\n\n`;
+  }
+
+  // Priority Actions
+  if (result.priorities.length > 0) {
+    md += `## Priority Actions\n\n`;
+    result.priorities.forEach((p, i) => {
+      md += `${i + 1}. ${p}\n`;
+    });
+    md += `\n`;
+  }
+
+  // Per-dimension sections
+  md += `## Detailed Findings\n\n`;
+  for (const dim of result.dimensions) {
+    const info = DIMENSION_INFO.find(d => d.id === dim.id);
+    const whyText = DIMENSION_WHY[dim.id] || "";
+
+    md += `### ${dim.name} — ${dim.score}/100 (${dim.grade})\n\n`;
+    md += `**Weight:** ${Math.round(dim.weight * 100)}%\n\n`;
+
+    if (whyText) {
+      md += `**Why it matters:** ${whyText}\n\n`;
+    }
+
+    // Findings
+    const fails = dim.findings.filter(f => f.type === "fail");
+    const warnings = dim.findings.filter(f => f.type === "warning");
+    const passes = dim.findings.filter(f => f.type === "pass");
+
+    if (fails.length > 0) {
+      md += `**Issues found:**\n`;
+      fails.forEach(f => {
+        md += `- ${f.message}${f.page ? ` (${f.page})` : ""}${f.detail ? ` — ${f.detail}` : ""}\n`;
+      });
+      md += `\n`;
+    }
+    if (warnings.length > 0) {
+      md += `**Warnings:**\n`;
+      warnings.forEach(f => {
+        md += `- ${f.message}${f.page ? ` (${f.page})` : ""}${f.detail ? ` — ${f.detail}` : ""}\n`;
+      });
+      md += `\n`;
+    }
+    if (passes.length > 0) {
+      md += `**Passing:**\n`;
+      passes.forEach(f => {
+        md += `- ${f.message}${f.page ? ` (${f.page})` : ""}\n`;
+      });
+      md += `\n`;
+    }
+
+    // How to fix
+    const fixKey = dim.id === "llmsTxt" ? "llmsTxt" : dim.id;
+    const howToFix = instructions[fixKey];
+    if (howToFix && dim.score < 90) {
+      md += `**How to fix (${frameworkKey}):** ${howToFix}\n\n`;
+    }
+
+    md += `---\n\n`;
+  }
+
+  // Implementation Guide
+  md += `## Implementation Guide (${frameworkKey})\n\n`;
+  md += `${instructions.general || "Apply the generated fix files to your site."}\n\n`;
+
+  // File-by-file Changes
+  const fileEntries = Object.keys(result.generatedFiles).filter(f => result.generatedFiles[f]);
+  if (fileEntries.length > 0) {
+    md += `## Generated Files\n\n`;
+    md += `| File | Purpose |\n|------|--------|\n`;
+    for (const f of fileEntries) {
+      let purpose = "Fix file";
+      if (f === "robots.txt") purpose = "AI-optimized robots.txt with all 17+ AI crawler rules";
+      else if (f === "sitemap.xml") purpose = "Complete XML sitemap for AI crawlers";
+      else if (f === "llms.txt") purpose = "Machine-readable site summary (llmstxt.org standard)";
+      else if (f === "llms-full.txt") purpose = "Extended llms.txt with full page content";
+      else if (f.endsWith(".jsonld")) purpose = `JSON-LD structured data for ${f.replace("schema/", "").replace(".jsonld", "")}`;
+      else if (f.endsWith(".md") && f.includes("README")) purpose = "Installation instructions for JSON-LD files";
+      else if (f === "remediation-report.md") purpose = "This report";
+      md += `| \`${f}\` | ${purpose} |\n`;
+    }
+    md += `\n`;
+  }
+
+  // Quick Start
+  md += `## Quick Start\n\n`;
+  md += `1. **Download the ZIP** containing all generated files\n`;
+  md += `2. **Deploy the fix files** to your site's root directory (robots.txt, sitemap.xml, llms.txt)\n`;
+  md += `3. **Add JSON-LD** to each page's \`<head>\` using the schema/*.jsonld files\n\n`;
+  md += `For detailed instructions specific to ${frameworkKey}, see the sections above.\n\n`;
+
+  md += `---\n*Generated by LLM Search Optimizer on ${today}*\n`;
+
+  return md;
+}
+
+// --- Fixed HTML Pages ---
+
+export function generateFixedHtmlPages(
+  pages: PageData[],
+  schemaFiles: Record<string, string>,
+  baseUrl: string,
+  siteName: string,
+): Record<string, string> {
+  const output: Record<string, string> = {};
+  const changeLog: string[] = [];
+
+  for (const page of pages) {
+    const $ = cheerio.load(page.html);
+    let modified = false;
+    const changes: string[] = [];
+
+    // 1. Check/inject meta description
+    if ($('meta[name="description"]').length === 0) {
+      const desc = extractDescription(page);
+      $("head").append(`\n    <meta name="description" content="${escapeAttr(desc)}">`);
+      modified = true;
+      changes.push("Added meta description");
+    }
+
+    // 2. Check/inject canonical
+    if ($('link[rel="canonical"]').length === 0) {
+      $("head").append(`\n    <link rel="canonical" href="${escapeAttr(page.url)}">`);
+      modified = true;
+      changes.push("Added canonical URL");
+    }
+
+    // 3. Check/inject OG tags
+    if ($('meta[property="og:title"]').length === 0) {
+      const title = page.title || $("title").first().text().trim();
+      $("head").append(`\n    <meta property="og:title" content="${escapeAttr(title)}">`);
+      modified = true;
+      changes.push("Added og:title");
+    }
+    if ($('meta[property="og:description"]').length === 0) {
+      const desc = $('meta[name="description"]').attr("content") || extractDescription(page);
+      $("head").append(`\n    <meta property="og:description" content="${escapeAttr(desc)}">`);
+      modified = true;
+      changes.push("Added og:description");
+    }
+    if ($('meta[property="og:url"]').length === 0) {
+      $("head").append(`\n    <meta property="og:url" content="${escapeAttr(page.url)}">`);
+      modified = true;
+      changes.push("Added og:url");
+    }
+    if ($('meta[property="og:type"]').length === 0) {
+      const pageType = guessPageType(page.url, page.title);
+      const ogType = pageType === "post" ? "article" : "website";
+      $("head").append(`\n    <meta property="og:type" content="${ogType}">`);
+      modified = true;
+      changes.push("Added og:type");
+    }
+
+    // 4. Check/inject JSON-LD (only if no existing JSON-LD)
+    if ($('script[type="application/ld+json"]').length === 0) {
+      const schemaKey = `schema/${safeFilename(page.path)}.jsonld`;
+      const schemaContent = schemaFiles[schemaKey];
+      if (schemaContent) {
+        // The schema content already has <script> tags, extract the JSON parts
+        const scriptMatches = schemaContent.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g);
+        if (scriptMatches) {
+          for (const scriptTag of scriptMatches) {
+            $("head").append(`\n    ${scriptTag}`);
+          }
+          modified = true;
+          changes.push("Added JSON-LD structured data");
+        }
+      }
+    }
+
+    if (modified) {
+      const filename = `pages/${safeFilename(page.path)}.html`;
+      output[filename] = $.html();
+      changeLog.push(`- **${page.path}**: ${changes.join(", ")}`);
+    }
+  }
+
+  // Add README
+  if (Object.keys(output).length > 0) {
+    output["pages/README.md"] = `# Fixed HTML Pages
+
+These pages have been updated with missing meta tags and JSON-LD structured data.
+
+## Changes Made
+
+${changeLog.join("\n")}
+
+## What Was NOT Changed
+
+- Page content and body HTML remain untouched
+- Existing meta tags were preserved (no duplicates)
+- Existing JSON-LD was not modified
+- Only missing tags were added to the \`<head>\`
+
+## How to Use
+
+Replace your original HTML files with these updated versions, or copy the new \`<head>\` tags into your existing pages.
+
+---
+*Generated by LLM Search Optimizer*
+`;
+  }
+
+  return output;
+}
+
+function escapeAttr(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

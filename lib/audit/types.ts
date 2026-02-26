@@ -23,6 +23,14 @@ export interface PageData {
   statusCode?: number;
 }
 
+export interface AiDiagnostic {
+  step: string;
+  success: boolean;
+  error?: string;
+  durationMs: number;
+  model: string;
+}
+
 export interface AuditResult {
   url: string;
   timestamp: string;
@@ -34,6 +42,10 @@ export interface AuditResult {
   dimensions: DimensionResult[];
   priorities: string[];
   downloadId: string;
+  aiMode: "ai-enhanced" | "basic" | "ai-failed";
+  generatedFiles: GeneratedFiles;
+  aiDiagnostics?: AiDiagnostic[];
+  fixPagesId?: string;
 }
 
 export interface AuditProgress {
@@ -41,6 +53,7 @@ export interface AuditProgress {
   dimension: string;
   status: "running" | "complete" | "skipped";
   score?: number;
+  detail?: string;
 }
 
 export interface AuditComplete {

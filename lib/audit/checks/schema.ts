@@ -12,7 +12,7 @@ const EXPECTED_SCHEMAS: Record<string, string[]> = {
   faq: ["FAQPage", "BreadcrumbList"],
 };
 
-function guessPageType(url: string, title: string): string {
+export function guessPageType(url: string, title: string): string {
   const path = new URL(url).pathname.toLowerCase();
   if (path === "/" || path === "") return "home";
   if (/about/i.test(path)) return "about";

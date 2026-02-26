@@ -89,8 +89,8 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      function sendProgress(dimension: string, status: string, score?: number) {
-        const line = JSON.stringify({ type: "progress", dimension, status, score }) + "\n";
+      function sendProgress(dimension: string, status: string, score?: number, detail?: string) {
+        const line = JSON.stringify({ type: "progress", dimension, status, score, detail }) + "\n";
         controller.enqueue(encoder.encode(line));
       }
 
@@ -113,8 +113,8 @@ export async function POST(request: NextRequest) {
         );
 
         // Run audit with progress
-        const result = await runFullAudit(crawl, (dimension, status, score) => {
-          sendProgress(dimension, status, score);
+        const result = await runFullAudit(crawl, (dimension, status, score, detail) => {
+          sendProgress(dimension, status, score, detail);
         });
 
         // Send final result

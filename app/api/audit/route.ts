@@ -72,14 +72,15 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      function sendProgress(dimension: string, status: string, score?: number) {
-        const line = JSON.stringify({ type: "progress", dimension, status, score }) + "\n";
+      function sendProgress(dimension: string, status: string, score?: number, detail?: string) {
+        const line = JSON.stringify({ type: "progress", dimension, status, score, detail }) + "\n";
         controller.enqueue(encoder.encode(line));
       }
 
       try {
         // Crawl phase
-        sendProgress("Crawling site", "running");
+        const crawlHostname = new URL(parsed.data.url.startsWith("http") ? parsed.data.url : `https://${parsed.data.url}`).hostname;
+        sendProgress("Crawling site", "running", undefined, `Discovering pages on ${crawlHostname}...`);
         const crawl = await crawlSite(parsed.data.url);
         sendProgress("Crawling site", "complete");
         sendProgress(
@@ -101,8 +102,8 @@ export async function POST(request: NextRequest) {
         );
 
         // Run audit with progress
-        const result = await runFullAudit(crawl, (dimension, status, score) => {
-          sendProgress(dimension, status, score);
+        const result = await runFullAudit(crawl, (dimension, status, score, detail) => {
+          sendProgress(dimension, status, score, detail);
         });
 
         // Send final result

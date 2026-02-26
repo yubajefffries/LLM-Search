@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, Sparkles } from "lucide-react";
 import type { DimensionResult } from "@/lib/audit/types";
 import { getScoreBgColor } from "@/lib/utils";
 
@@ -62,6 +62,9 @@ export function DimensionCard({ dimension, index }: DimensionCardProps) {
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-foreground">{dimension.name}</span>
                   <span className="text-xs text-muted-foreground">({weightPercent}%)</span>
+                  {dimension.findings.some(f => f.detail?.includes("(AI-analyzed)")) && (
+                    <Sparkles className="h-3.5 w-3.5 text-accent" aria-label="AI-enhanced" />
+                  )}
                 </div>
                 <Progress
                   value={dimension.score}

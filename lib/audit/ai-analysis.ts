@@ -1,9 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { DimensionResult, Finding, PageData } from "./types";
+import type { AuditResult, DimensionResult, Finding, PageData } from "./types";
 
-function hasApiKey(): boolean {
+export const AI_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6-20250514";
+
+export function hasApiKey(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
 }
+
+// Log API key status at module load
+console.log("[AI] ANTHROPIC_API_KEY:", hasApiKey() ? "configured" : "NOT SET — AI features disabled");
+console.log("[AI] Model:", AI_MODEL);
 
 export function checkAeoContent(pages: PageData[]): DimensionResult {
   // This is the deterministic AEO check — basic pattern matching
@@ -13,7 +19,6 @@ export function checkAeoContent(pages: PageData[]): DimensionResult {
   for (const page of pages) {
     let pageScore = 0;
     const html = page.html.toLowerCase();
-    const bodyText = page.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
     // Check for TL;DR / summary blocks
     const hasSummary = /class\s*=\s*["'][^"']*(?:summary|tldr|intro|excerpt)[^"']*["']/i.test(page.html)
@@ -105,13 +110,11 @@ export function checkAeoContent(pages: PageData[]): DimensionResult {
 export async function enhanceAeoWithAI(
   basicResult: DimensionResult,
   pages: PageData[]
-): Promise<DimensionResult> {
+): Promise<{ result: DimensionResult; aiUsed: boolean; error?: string; durationMs: number }> {
+  const start = Date.now();
+
   if (!hasApiKey()) {
-    basicResult.findings.push({
-      type: "info",
-      message: "AI-enhanced AEO scoring unavailable — no ANTHROPIC_API_KEY configured",
-    });
-    return basicResult;
+    return { result: basicResult, aiUsed: false, error: "No ANTHROPIC_API_KEY configured", durationMs: Date.now() - start };
   }
 
   try {
@@ -124,7 +127,7 @@ export async function enhanceAeoWithAI(
     }).join("\n\n---\n\n");
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6-20250514",
+      model: AI_MODEL,
       max_tokens: 1024,
       messages: [{
         role: "user",
@@ -149,34 +152,41 @@ Respond in JSON only: {"score": number, "findings": [{"type": "pass"|"warning"|"
       // Blend AI score with deterministic score (60% AI, 40% deterministic)
       const blendedScore = Math.round(aiResult.score * 0.6 + basicResult.score * 0.4);
       return {
-        ...basicResult,
-        score: blendedScore,
-        grade: blendedScore >= 90 ? "A" : blendedScore >= 80 ? "B" : blendedScore >= 70 ? "C" : blendedScore >= 60 ? "D" : "F",
-        findings: [
-          ...basicResult.findings,
-          ...((aiResult.findings || []) as Finding[]).map((f: Finding) => ({
-            ...f,
-            detail: "(AI-analyzed)",
-          })),
-        ],
+        result: {
+          ...basicResult,
+          score: blendedScore,
+          grade: blendedScore >= 90 ? "A" : blendedScore >= 80 ? "B" : blendedScore >= 70 ? "C" : blendedScore >= 60 ? "D" : "F",
+          findings: [
+            ...basicResult.findings,
+            ...((aiResult.findings || []) as Finding[]).map((f: Finding) => ({
+              ...f,
+              detail: "(AI-analyzed)",
+            })),
+          ],
+        },
+        aiUsed: true,
+        durationMs: Date.now() - start,
       };
     }
-  } catch {
-    basicResult.findings.push({
-      type: "info",
-      message: "AI analysis failed — using deterministic score only",
-    });
-  }
 
-  return basicResult;
+    return { result: basicResult, aiUsed: false, error: "AI returned unparseable response", durationMs: Date.now() - start };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[AI] enhanceAeoWithAI failed:", msg);
+    return { result: basicResult, aiUsed: false, error: msg, durationMs: Date.now() - start };
+  }
 }
 
 export async function generateLlmsTxtWithAI(
   pages: PageData[],
   baseUrl: string,
   siteName: string
-): Promise<{ llmsTxt: string; llmsFullTxt: string } | null> {
-  if (!hasApiKey()) return null;
+): Promise<{ result: { llmsTxt: string; llmsFullTxt: string } | null; error?: string; durationMs: number }> {
+  const start = Date.now();
+
+  if (!hasApiKey()) {
+    return { result: null, error: "No ANTHROPIC_API_KEY configured", durationMs: Date.now() - start };
+  }
 
   try {
     const client = new Anthropic();
@@ -193,7 +203,7 @@ export async function generateLlmsTxtWithAI(
     });
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6-20250514",
+      model: AI_MODEL,
       max_tokens: 4096,
       messages: [{
         role: "user",
@@ -219,11 +229,123 @@ Respond in JSON: {"llmsTxt": "string", "llmsFullTxt": "string"}`,
     const text = response.content[0].type === "text" ? response.content[0].text : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      return { result: parsed, durationMs: Date.now() - start };
     }
-  } catch {
-    // Fall through to null
+
+    return { result: null, error: "AI returned unparseable response", durationMs: Date.now() - start };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[AI] generateLlmsTxtWithAI failed:", msg);
+    return { result: null, error: msg, durationMs: Date.now() - start };
+  }
+}
+
+export async function generateSchemaJsonLdWithAI(
+  pages: PageData[],
+  baseUrl: string,
+  siteName: string
+): Promise<{ result: Record<string, string> | null; error?: string; durationMs: number }> {
+  const start = Date.now();
+
+  if (!hasApiKey()) {
+    return { result: null, error: "No ANTHROPIC_API_KEY configured", durationMs: Date.now() - start };
   }
 
-  return null;
+  try {
+    const client = new Anthropic();
+
+    const pagesInfo = pages.slice(0, 10).map(p => {
+      const textOnly = p.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      const metaDesc = p.html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i)?.[1]
+        || p.html.match(/<meta\s+content=["']([^"']+)["']\s+name=["']description["']/i)?.[1]
+        || "";
+      return `Page: ${p.path}\nURL: ${p.url}\nTitle: ${p.title}\nMeta description: ${metaDesc}\nContent (first 500 chars): ${textOnly.substring(0, 500)}`;
+    }).join("\n\n---\n\n");
+
+    const response = await client.messages.create({
+      model: AI_MODEL,
+      max_tokens: 4096,
+      messages: [{
+        role: "user",
+        content: `Generate Schema.org JSON-LD structured data for each page of this website. Use the most appropriate schema types for each page.
+
+Site: ${siteName} (${baseUrl})
+
+${pagesInfo}
+
+For each page, generate valid JSON-LD with @context, @type, and relevant properties. Use these guidelines:
+- Home page → Organization + WebSite
+- Blog posts → BlogPosting with author, datePublished, publisher
+- About page → AboutPage
+- Services → Service
+- FAQ → FAQPage with Question/Answer
+- Non-home pages → include BreadcrumbList
+
+Respond in JSON only: {"files": {"page-path.jsonld": "<script type=\\"application/ld+json\\">...JSON-LD...</script>", ...}}
+
+Use safe filenames (replace / with --, remove leading --). Include the full <script> tag wrapper.`,
+      }],
+    });
+
+    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return { result: parsed.files || null, durationMs: Date.now() - start };
+    }
+
+    return { result: null, error: "AI returned unparseable response", durationMs: Date.now() - start };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[AI] generateSchemaJsonLdWithAI failed:", msg);
+    return { result: null, error: msg, durationMs: Date.now() - start };
+  }
+}
+
+export async function enhanceReportWithAI(
+  basicReport: string,
+  result: AuditResult,
+  siteType: string,
+): Promise<{ report: string; aiUsed: boolean; error?: string; durationMs: number }> {
+  const start = Date.now();
+
+  if (!hasApiKey()) {
+    return { report: basicReport, aiUsed: false, error: "No ANTHROPIC_API_KEY configured", durationMs: Date.now() - start };
+  }
+
+  try {
+    const client = new Anthropic();
+
+    const response = await client.messages.create({
+      model: AI_MODEL,
+      max_tokens: 4096,
+      messages: [{
+        role: "user",
+        content: `You are an LLM search optimization expert. Enhance this remediation report with richer, more actionable explanations. Keep the same markdown structure and headings. Make the advice more specific to this ${siteType} site that scored ${result.overallScore}/100 (grade ${result.grade}).
+
+Focus on:
+- More specific "how to fix" instructions for ${siteType}
+- Better explanations of why each dimension matters for AI/LLM discoverability
+- Concrete examples where helpful
+
+Keep it professional, concise, and actionable. Return ONLY the enhanced markdown report (no wrapping, no code blocks).
+
+---
+
+${basicReport}`,
+      }],
+    });
+
+    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    if (text.length > 100) {
+      return { report: text, aiUsed: true, durationMs: Date.now() - start };
+    }
+
+    return { report: basicReport, aiUsed: false, error: "AI returned too-short response", durationMs: Date.now() - start };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[AI] enhanceReportWithAI failed:", msg);
+    return { report: basicReport, aiUsed: false, error: msg, durationMs: Date.now() - start };
+  }
 }
