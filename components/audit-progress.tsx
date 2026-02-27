@@ -23,6 +23,58 @@ interface AuditProgressProps {
   aiStatus?: "pending" | "running" | "complete" | "skipped";
 }
 
+/** SVG arc progress ring — fills clockwise as tasks complete */
+function ProgressRing({
+  completed,
+  total,
+  size = 48,
+  strokeWidth = 4,
+}: {
+  completed: number;
+  total: number;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  const center = size / 2;
+  const radius = center - strokeWidth;
+  const circumference = 2 * Math.PI * radius;
+  const pct = total > 0 ? completed / total : 0;
+  const dashOffset = circumference * (1 - pct);
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      className="shrink-0 -rotate-90"
+      aria-hidden="true"
+    >
+      {/* Track */}
+      <circle
+        cx={center}
+        cy={center}
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        className="text-muted/30"
+      />
+      {/* Progress arc */}
+      <circle
+        cx={center}
+        cy={center}
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={dashOffset}
+        className="text-accent transition-all duration-500 ease-out"
+      />
+    </svg>
+  );
+}
+
 export function AuditProgress({ steps, siteInfo, aiSubSteps = [], aiStatus = "pending" }: AuditProgressProps) {
   // Phase 1: Crawl + 8 dimension checks
   const scanDimensions: ProgressStep[] = [
@@ -46,6 +98,11 @@ export function AuditProgress({ steps, siteInfo, aiSubSteps = [], aiStatus = "pe
   // AI step from progress
   const aiStep = steps.find(s => s.dimension === "AI Analysis");
   const effectiveAiStatus = aiStep?.status ?? aiStatus;
+
+  // Derive progress ring values from sub-steps
+  const totalSubSteps = aiSubSteps.length > 0 ? aiSubSteps.length : 4;
+  const completedSubSteps = aiSubSteps.filter(s => s.status === "complete").length;
+  const aiIsRunning = effectiveAiStatus === "running";
 
   return (
     <div className="mx-auto max-w-xl px-4 py-16">
@@ -149,8 +206,13 @@ export function AuditProgress({ steps, siteInfo, aiSubSteps = [], aiStatus = "pe
         }`}
       >
         <div className="flex items-center gap-3">
-          {effectiveAiStatus === "running" ? (
-            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-accent" />
+          {/* Icon area: progress ring when running, otherwise standard icons */}
+          {aiIsRunning ? (
+            <div className="relative shrink-0">
+              <ProgressRing completed={completedSubSteps} total={totalSubSteps} size={36} strokeWidth={3} />
+              {/* Sparkles centered inside the ring */}
+              <Sparkles className="absolute inset-0 m-auto h-3.5 w-3.5 text-accent" />
+            </div>
           ) : effectiveAiStatus === "complete" ? (
             <CheckCircle2 className="h-5 w-5 shrink-0 text-pass" />
           ) : effectiveAiStatus === "skipped" ? (
@@ -158,33 +220,43 @@ export function AuditProgress({ steps, siteInfo, aiSubSteps = [], aiStatus = "pe
           ) : (
             <Circle className="h-5 w-5 shrink-0 text-muted-foreground/40" />
           )}
-          <div className="flex items-center gap-2">
-            <Sparkles className={`h-4 w-4 ${
-              effectiveAiStatus === "running" ? "text-accent" :
-              effectiveAiStatus === "complete" ? "text-pass" :
-              "text-muted-foreground/60"
-            }`} />
-            <span className={`font-medium ${
-              effectiveAiStatus === "running" ? "text-accent" :
-              effectiveAiStatus === "complete" ? "text-foreground" :
-              effectiveAiStatus === "skipped" ? "text-muted-foreground" :
-              "text-muted-foreground/60"
-            }`}>
-              Claude AI Analysis
-            </span>
+
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {!aiIsRunning && (
+                <Sparkles className={`h-4 w-4 ${
+                  effectiveAiStatus === "complete" ? "text-pass" : "text-muted-foreground/60"
+                }`} />
+              )}
+              <span className={`font-medium ${
+                effectiveAiStatus === "running" ? "text-accent" :
+                effectiveAiStatus === "complete" ? "text-foreground" :
+                effectiveAiStatus === "skipped" ? "text-muted-foreground" :
+                "text-muted-foreground/60"
+              }`}>
+                Claude AI Analysis
+              </span>
+            </div>
+
+            {/* Progress counter while running */}
+            {aiIsRunning && aiSubSteps.length > 0 && (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {completedSubSteps}/{totalSubSteps} complete
+              </span>
+            )}
           </div>
         </div>
 
-        {/* AI sub-steps */}
-        {effectiveAiStatus === "running" && aiSubSteps.length > 0 && (
-          <div className="ml-8 mt-3 space-y-2">
-            <AnimatePresence>
+        {/* AI sub-steps — shown while running OR after completion so user sees all 4 */}
+        {(aiIsRunning || effectiveAiStatus === "complete") && aiSubSteps.length > 0 && (
+          <div className="ml-10 mt-3 space-y-2">
+            <AnimatePresence initial={false}>
               {aiSubSteps.map((sub, i) => (
                 <motion.div
-                  key={i}
+                  key={sub.label}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2 }}
+                  transition={{ duration: 0.2, delay: i * 0.05 }}
                   className="flex items-center gap-2"
                 >
                   {sub.status === "complete" ? (
@@ -210,8 +282,8 @@ export function AuditProgress({ steps, siteInfo, aiSubSteps = [], aiStatus = "pe
           </p>
         )}
 
-        {/* Complete message */}
-        {effectiveAiStatus === "complete" && (
+        {/* Complete summary */}
+        {effectiveAiStatus === "complete" && aiSubSteps.length === 0 && (
           <p className="ml-8 mt-2 text-xs text-pass">
             Claude AI analysis complete
           </p>

@@ -1,9 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AuditResult, DimensionResult, Finding, PageData } from "./types";
 
-export const AI_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
+export const AI_MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
 
-const AI_TIMEOUT_MS = 25_000;
+export const AI_TIMEOUT_MS = 20_000;
 
 function createClient(): Anthropic {
   return new Anthropic({ timeout: AI_TIMEOUT_MS, maxRetries: 0 });
@@ -210,7 +210,7 @@ export async function generateLlmsTxtWithAI(
 
     const response = await client.messages.create({
       model: AI_MODEL,
-      max_tokens: 4096,
+      max_tokens: 2048,
       messages: [{
         role: "user",
         content: `Generate llms.txt and llms-full.txt files following the llmstxt.org spec for this site.
@@ -271,7 +271,7 @@ export async function generateSchemaJsonLdWithAI(
 
     const response = await client.messages.create({
       model: AI_MODEL,
-      max_tokens: 4096,
+      max_tokens: 2048,
       messages: [{
         role: "user",
         content: `Generate Schema.org JSON-LD structured data for each page of this website. Use the most appropriate schema types for each page.
@@ -313,6 +313,7 @@ export async function enhanceReportWithAI(
   basicReport: string,
   result: AuditResult,
   siteType: string,
+  timeoutMs = AI_TIMEOUT_MS,
 ): Promise<{ report: string; aiUsed: boolean; error?: string; durationMs: number }> {
   const start = Date.now();
 
@@ -321,11 +322,17 @@ export async function enhanceReportWithAI(
   }
 
   try {
-    const client = createClient();
+    // Use caller-supplied timeout so scorer.ts can pass remaining Vercel budget
+    const client = new Anthropic({ timeout: timeoutMs, maxRetries: 0 });
+
+    // Trim to 2000 chars — covers Executive Summary + top issues, enough for Claude to give site-specific advice
+    const trimmedReport = basicReport.length > 2000
+      ? basicReport.substring(0, 2000) + "\n\n[...full detail available in downloadable report]"
+      : basicReport;
 
     const response = await client.messages.create({
       model: AI_MODEL,
-      max_tokens: 4096,
+      max_tokens: 2048,
       messages: [{
         role: "user",
         content: `You are an LLM search optimization expert. Enhance this remediation report with richer, more actionable explanations. Keep the same markdown structure and headings. Make the advice more specific to this ${siteType} site that scored ${result.overallScore}/100 (grade ${result.grade}).
@@ -339,7 +346,7 @@ Keep it professional, concise, and actionable. Return ONLY the enhanced markdown
 
 ---
 
-${basicReport}`,
+${trimmedReport}`,
       }],
     });
 

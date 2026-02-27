@@ -72,22 +72,26 @@ export default function HomePage() {
           const msg = JSON.parse(line);
 
           if (msg.type === "progress") {
-            // Track AI sub-steps separately
+            // Track AI sub-steps separately using INIT:/DONE:/SKIP: prefix protocol
             if (msg.dimension === "AI Analysis" && msg.detail) {
-              if (msg.status === "running") {
-                setAiSubSteps(prev => {
-                  // Mark previous running sub-step as complete
-                  const updated = prev.map(s =>
-                    s.status === "running" ? { ...s, status: "complete" as const } : s
-                  );
-                  // Push new sub-step
-                  return [...updated, { label: msg.detail, status: "running" as const }];
-                });
-              } else if (msg.status === "complete" || msg.status === "skipped") {
-                // Mark all remaining as complete
+              const detail: string = msg.detail;
+              if (detail.startsWith("INIT:")) {
+                // Declare a new parallel sub-step as running
+                const label = detail.slice(5);
+                setAiSubSteps(prev => [...prev, { label, status: "running" as const }]);
+              } else if (detail.startsWith("DONE:")) {
+                // Mark the specific sub-step complete by label
+                const label = detail.slice(5);
                 setAiSubSteps(prev =>
-                  prev.map(s => ({ ...s, status: "complete" as const }))
+                  prev.map(s => s.label === label ? { ...s, status: "complete" as const } : s)
                 );
+              } else if (detail.startsWith("SKIP:")) {
+                // Show as immediately complete (was skipped due to budget)
+                const label = detail.slice(5);
+                setAiSubSteps(prev => [...prev, { label: `${label} (skipped)`, status: "complete" as const }]);
+              } else if (msg.status === "complete" || msg.status === "skipped") {
+                // AI Analysis fully done — mark any stragglers complete
+                setAiSubSteps(prev => prev.map(s => ({ ...s, status: "complete" as const })));
               }
             }
 
