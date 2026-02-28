@@ -27,7 +27,11 @@ export async function POST(request: NextRequest) {
   const stored = getStoredPages(parsed.data.fixPagesId);
   if (!stored) {
     return NextResponse.json(
-      { error: "Session expired or not found. Please run a new audit." },
+      {
+        error: "Session expired",
+        message: "Your audit session expired. Please run a new audit.",
+        action: "re-audit",
+      },
       { status: 404 },
     );
   }

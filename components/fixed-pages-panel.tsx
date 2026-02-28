@@ -80,7 +80,8 @@ export function FixedPagesPanel({ fixPagesId }: FixedPagesPanelProps) {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error || "Failed to generate fixed pages");
+        const errData = data as { error?: string; message?: string };
+        throw new Error(errData.message || errData.error || "Failed to generate fixed pages");
       }
 
       const data = await response.json() as FixedPagesResult;
@@ -158,19 +159,29 @@ export function FixedPagesPanel({ fixPagesId }: FixedPagesPanelProps) {
 
   // Error state
   if (state === "error") {
+    const isExpired = error?.toLowerCase().includes("expired");
     return (
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         className="mt-6 rounded-lg border border-fail/30 bg-fail/5 p-4 text-center"
       >
-        <p className="text-sm text-fail mb-2">{error}</p>
-        <button
-          onClick={handleGenerate}
-          className="text-xs text-muted-foreground underline hover:text-foreground"
-        >
-          Try again
-        </button>
+        <p className="text-sm text-fail mb-3">{error}</p>
+        {isExpired ? (
+          <a
+            href="/"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/90"
+          >
+            Run New Audit
+          </a>
+        ) : (
+          <button
+            onClick={handleGenerate}
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            Try again
+          </button>
+        )}
       </motion.div>
     );
   }

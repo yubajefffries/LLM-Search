@@ -261,7 +261,7 @@ export async function generateSchemaJsonLdWithAI(
   try {
     const client = createClient();
 
-    const pagesInfo = pages.slice(0, 10).map(p => {
+    const pagesInfo = pages.slice(0, 5).map(p => {
       const textOnly = p.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
       const metaDesc = p.html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i)?.[1]
         || p.html.match(/<meta\s+content=["']([^"']+)["']\s+name=["']description["']/i)?.[1]
@@ -271,7 +271,7 @@ export async function generateSchemaJsonLdWithAI(
 
     const response = await client.messages.create({
       model: AI_MODEL,
-      max_tokens: 2048,
+      max_tokens: 4096,
       messages: [{
         role: "user",
         content: `Generate Schema.org JSON-LD structured data for each page of this website. Use the most appropriate schema types for each page.
@@ -297,11 +297,15 @@ Use safe filenames (replace / with --, remove leading --). Include the full <scr
     const text = response.content[0].type === "text" ? response.content[0].text : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return { result: parsed.files || null, durationMs: Date.now() - start };
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return { result: parsed.files || null, durationMs: Date.now() - start };
+      } catch {
+        return { result: null, error: "AI schema response was too large — using deterministic generator", durationMs: Date.now() - start };
+      }
     }
 
-    return { result: null, error: "AI returned unparseable response", durationMs: Date.now() - start };
+    return { result: null, error: "AI returned unparseable response — using deterministic generator", durationMs: Date.now() - start };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[AI] generateSchemaJsonLdWithAI failed:", msg);

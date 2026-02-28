@@ -60,7 +60,7 @@ export const REQUIRED_META_TAGS = [
 ] as const;
 
 export const MAX_PAGES_TO_AUDIT = 20;
-export const MAX_PAGES_TO_DISCOVER = 50;
+export const MAX_PAGES_TO_DISCOVER = 20;
 export const RATE_LIMIT_MAX = 5;
 export const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 export const STORE_TTL_MS = 60 * 60 * 1000; // 1 hour
