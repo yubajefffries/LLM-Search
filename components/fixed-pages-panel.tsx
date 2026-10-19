@@ -168,6 +168,7 @@ export function FixedPagesPanel({ fixPagesId }: FixedPagesPanelProps) {
       >
         <p className="text-sm text-fail mb-3">{error}</p>
         {isExpired ? (
+          // eslint-disable-next-line @next/next/no-html-link-for-pages -- Reload to clear the expired audit state, including when already on the home route.
           <a
             href="/"
             className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/90"
