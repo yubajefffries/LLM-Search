@@ -333,7 +333,7 @@ export default function HomePage() {
 
           {/* Fixed Pages (opt-in) */}
           {result.fixPagesId && (
-            <FixedPagesPanel fixPagesId={result.fixPagesId} />
+            <FixedPagesPanel fixPagesId={result.fixPagesId} onReset={handleReset} />
           )}
 
           {/* Actions */}
