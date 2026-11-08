@@ -12,6 +12,7 @@ import { Download, Copy, Check, FileCode, Loader2 } from "lucide-react";
 
 interface FixedPagesPanelProps {
   fixPagesId: string;
+  onReset: () => void;
 }
 
 interface FixedPagesResult {
@@ -62,7 +63,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-export function FixedPagesPanel({ fixPagesId }: FixedPagesPanelProps) {
+export function FixedPagesPanel({ fixPagesId, onReset }: FixedPagesPanelProps) {
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [result, setResult] = useState<FixedPagesResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -168,12 +169,13 @@ export function FixedPagesPanel({ fixPagesId }: FixedPagesPanelProps) {
       >
         <p className="text-sm text-fail mb-3">{error}</p>
         {isExpired ? (
-          <a
-            href="/"
+          <button
+            type="button"
+            onClick={onReset}
             className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/90"
           >
             Run New Audit
-          </a>
+          </button>
         ) : (
           <button
             onClick={handleGenerate}
